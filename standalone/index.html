@@ -684,14 +684,21 @@ function showAlarmToast(msg, opts){
   const el = document.createElement("div");
   el.id = id;
   el.className = "nb-card";
-  el.style.cssText = "position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:60; padding:14px 20px; background:#FFD600; display:flex; align-items:center; gap:14px; max-width:90vw;";
+  el.style.cssText = "position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:60; padding:14px 20px; background:#FFD600; display:flex; align-items:center; gap:14px; max-width:90vw; flex-wrap:wrap;";
   const showCheckin = !!(opts && opts.checkin);
+  const showSnooze = !!(opts && opts.alarm);
+  const hint = [
+    showCheckin ? '"Start studying"' : null,
+    showSnooze ? '"Snooze 5 min"' : null,
+    'Stop'
+  ].filter(Boolean).join(" · ");
   el.innerHTML = `<span style="font-size:28px">⏰</span>
-    <div class="flex-1">
+    <div class="flex-1" style="min-width:200px">
       <div class="h-display font-extrabold text-lg">${escapeHtml(msg)}</div>
-      <div class="text-xs" style="color:var(--ink-soft)">${showCheckin?'Tap "Start studying" or Stop':'Tap to dismiss'}</div>
+      <div class="text-xs" style="color:var(--ink-soft)">Tap ${hint}</div>
     </div>
     ${showCheckin?'<button class="nb-btn px-3 py-2 text-xs" data-act="checkin" style="background:#00C896">▶ Start studying</button>':''}
+    ${showSnooze?'<button class="nb-btn px-3 py-2 text-xs" data-act="snooze" style="background:#B388FF">💤 Snooze 5</button>':''}
     <button class="nb-btn px-3 py-1 text-xs" data-act="stop" style="background:#fff">Stop</button>`;
   root.appendChild(el);
   const dismiss = ()=>{ stopAlarm(); el.remove(); };
@@ -704,11 +711,49 @@ function showAlarmToast(msg, opts){
       startStudyCheckin(opts.alarm);
       return;
     }
-    if (!showCheckin) dismiss();
+    if (act === "snooze"){
+      ev.stopPropagation();
+      stopAlarm();
+      el.remove();
+      snoozeAlarm(opts.alarm, opts.kind || "start", 5);
+      return;
+    }
+    if (!showCheckin && !showSnooze) dismiss();
   });
-  setTimeout(()=>{ if (document.getElementById(id)) document.getElementById(id).remove(); }, 20000);
+  setTimeout(()=>{ if (document.getElementById(id)) document.getElementById(id).remove(); }, 25000);
   flashTitle("⏰ " + msg);
   if (navigator.vibrate) try { navigator.vibrate([300,150,300,150,300]); } catch(e){}
+}
+
+let snoozeTimers = [];
+function snoozeAlarm(alarm, kind, minutes){
+  if (!alarm) return;
+  showSnoozeToast(`💤 Snoozed "${alarm.label || 'Study block'}" for ${minutes} min`);
+  const handle = setTimeout(()=>{
+    snoozeTimers = snoozeTimers.filter(h=>h!==handle);
+    // Re-fire
+    const perAlarmSound = kind === "start" ? alarm.startMusicData : alarm.endMusicData;
+    playAlarm(perAlarmSound || null);
+    const verb = kind === "start" ? "starting" : "ended";
+    const symbol = kind === "start" ? "▶" : "⏹";
+    showAlarmToast(`${symbol} ${alarm.label || "Study block"} ${verb} (snoozed)`, { alarm, kind, checkin: kind === "start" });
+    if ("Notification" in window && Notification.permission === "granted"){
+      try { new Notification("Studi", { body:`${symbol} ${alarm.label || "Study block"} ${verb} (snoozed)` }); } catch(e){}
+    }
+  }, minutes * 60 * 1000);
+  snoozeTimers.push(handle);
+}
+
+function showSnoozeToast(msg){
+  const root = document.getElementById("modal-root");
+  const id = "snooze-" + Date.now();
+  const el = document.createElement("div");
+  el.id = id;
+  el.className = "nb-card";
+  el.style.cssText = "position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:60; padding:10px 18px; background:#B388FF; display:flex; align-items:center; gap:10px;";
+  el.innerHTML = `<span style="font-size:22px">💤</span><span class="h-display font-bold">${escapeHtml(msg)}</span>`;
+  root.appendChild(el);
+  setTimeout(()=>{ if (document.getElementById(id)) document.getElementById(id).remove(); }, 2800);
 }
 
 // Study check-in: log a 1-min "started" session for the alarm's subject (or first subject) and auto-start the Pomodoro

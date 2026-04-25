@@ -63,11 +63,14 @@ If an alarm has no per-alarm sound, Studi falls back to the **default alarm soun
 
 Each alarm shows tiny **🎵 start** / **🎵 end** stickers when it has a custom sound configured.
 
-## Stopping alarms anytime
+## Stopping & snoozing alarms
 
-When an alarm rings, you'll see two ways to stop it:
-1. The yellow **toast at the top of the screen** has a **Stop** button (and a green **▶ Start studying** button if the alarm has a linked subject — see below).
-2. A pulsing red **🔇 Stop alarm** button floats at the bottom-right of the screen and stays visible until the sound stops. Tap it to silence everything immediately.
+When an alarm rings, you'll see three actions:
+1. **Stop** (white) on the toast → silences the alarm immediately.
+2. **💤 Snooze 5** (lavender) on the toast → silences for now and re-rings the same sound + toast in 5 minutes.
+3. **▶ Start studying** (green, only on start-time alarms with a linked subject) → see the next section.
+
+Plus a pulsing red **🔇 Stop alarm** floats at the bottom-right of the screen the whole time the sound is playing — tap it to silence anywhere in the app.
 
 Sounds also auto-stop after 60 seconds for safety.
 
