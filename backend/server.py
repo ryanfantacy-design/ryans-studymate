@@ -76,6 +76,45 @@ class SettingsUpdate(BaseModel):
     pomodoro_break: Optional[int] = None
 
 
+class JournalEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    date: str  # YYYY-MM-DD
+    mood: str = "okay"  # great|good|okay|meh|bad
+    content: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class JournalUpsert(BaseModel):
+    date: Optional[str] = None
+    mood: Optional[str] = "okay"
+    content: str = ""
+
+
+class MockTest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    subject_id: Optional[str] = None
+    subject_name: Optional[str] = None
+    date: str  # YYYY-MM-DD
+    score: float
+    max_score: float
+    percentage: float
+    notes: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class MockTestCreate(BaseModel):
+    name: str
+    subject_id: Optional[str] = None
+    date: Optional[str] = None
+    score: float
+    max_score: float
+    notes: Optional[str] = ""
+
+
 # ---------- Helpers ----------
 def today_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -262,11 +301,15 @@ async def export_all():
     subjects = await db.subjects.find({}, {"_id": 0}).to_list(10000)
     sessions = await db.sessions.find({}, {"_id": 0}).to_list(100000)
     settings = await db.settings.find_one({"id": "global"}, {"_id": 0}) or Settings().model_dump()
+    journal = await db.journal.find({}, {"_id": 0}).to_list(100000)
+    mocks = await db.mock_tests.find({}, {"_id": 0}).to_list(100000)
     return {
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "subjects": subjects,
         "sessions": sessions,
         "settings": settings,
+        "journal": journal,
+        "mock_tests": mocks,
     }
 
 
@@ -275,8 +318,9 @@ async def import_all(data: Dict[str, Any] = Body(...), replace: bool = True):
     if replace:
         await db.subjects.delete_many({})
         await db.sessions.delete_many({})
+        await db.journal.delete_many({})
+        await db.mock_tests.delete_many({})
     if data.get("subjects"):
-        # ensure each has id
         for s in data["subjects"]:
             if "id" not in s:
                 s["id"] = str(uuid.uuid4())
@@ -286,11 +330,125 @@ async def import_all(data: Dict[str, Any] = Body(...), replace: bool = True):
             if "id" not in s:
                 s["id"] = str(uuid.uuid4())
         await db.sessions.insert_many(data["sessions"])
+    if data.get("journal"):
+        for s in data["journal"]:
+            if "id" not in s:
+                s["id"] = str(uuid.uuid4())
+        await db.journal.insert_many(data["journal"])
+    if data.get("mock_tests"):
+        for s in data["mock_tests"]:
+            if "id" not in s:
+                s["id"] = str(uuid.uuid4())
+        await db.mock_tests.insert_many(data["mock_tests"])
     if data.get("settings"):
         s = data["settings"]
         s["id"] = "global"
         await db.settings.update_one({"id": "global"}, {"$set": s}, upsert=True)
-    return {"imported": True, "subjects": len(data.get("subjects", []) or []), "sessions": len(data.get("sessions", []) or [])}
+    return {
+        "imported": True,
+        "subjects": len(data.get("subjects", []) or []),
+        "sessions": len(data.get("sessions", []) or []),
+        "journal": len(data.get("journal", []) or []),
+        "mock_tests": len(data.get("mock_tests", []) or []),
+    }
+
+
+# Journal
+@api_router.get("/journal", response_model=List[JournalEntry])
+async def list_journal(date_from: Optional[str] = None, date_to: Optional[str] = None):
+    q: Dict[str, Any] = {}
+    if date_from or date_to:
+        q["date"] = {}
+        if date_from:
+            q["date"]["$gte"] = date_from
+        if date_to:
+            q["date"]["$lte"] = date_to
+    items = await db.journal.find(q, {"_id": 0}).sort("date", -1).to_list(10000)
+    return items
+
+
+@api_router.get("/journal/{entry_date}")
+async def get_journal(entry_date: str):
+    item = await db.journal.find_one({"date": entry_date}, {"_id": 0})
+    return item or {"date": entry_date, "mood": "okay", "content": "", "id": None}
+
+
+@api_router.post("/journal", response_model=JournalEntry)
+async def upsert_journal(payload: JournalUpsert):
+    d = payload.date or today_str()
+    existing = await db.journal.find_one({"date": d}, {"_id": 0})
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if existing:
+        update = {"mood": payload.mood or "okay", "content": payload.content or "", "updated_at": now_iso}
+        await db.journal.update_one({"date": d}, {"$set": update})
+        merged = {**existing, **update}
+        return merged
+    entry = JournalEntry(date=d, mood=payload.mood or "okay", content=payload.content or "")
+    await db.journal.insert_one(entry.model_dump())
+    return entry
+
+
+@api_router.delete("/journal/{entry_id}")
+async def delete_journal(entry_id: str):
+    res = await db.journal.delete_one({"id": entry_id})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Journal entry not found")
+    return {"deleted": True}
+
+
+# Mock Tests
+@api_router.post("/mocks", response_model=MockTest)
+async def create_mock(payload: MockTestCreate):
+    subject_name = None
+    if payload.subject_id:
+        subj = await db.subjects.find_one({"id": payload.subject_id}, {"_id": 0})
+        if subj:
+            subject_name = subj["name"]
+    if payload.max_score <= 0:
+        raise HTTPException(400, "max_score must be > 0")
+    pct = round((payload.score / payload.max_score) * 100, 2)
+    m = MockTest(
+        name=payload.name,
+        subject_id=payload.subject_id,
+        subject_name=subject_name,
+        date=payload.date or today_str(),
+        score=payload.score,
+        max_score=payload.max_score,
+        percentage=pct,
+        notes=payload.notes or "",
+    )
+    await db.mock_tests.insert_one(m.model_dump())
+    return m
+
+
+@api_router.get("/mocks", response_model=List[MockTest])
+async def list_mocks():
+    items = await db.mock_tests.find({}, {"_id": 0}).sort("date", -1).to_list(10000)
+    return items
+
+
+@api_router.delete("/mocks/{mock_id}")
+async def delete_mock(mock_id: str):
+    res = await db.mock_tests.delete_one({"id": mock_id})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Mock test not found")
+    return {"deleted": True}
+
+
+@api_router.get("/mocks/stats/overview")
+async def mock_stats():
+    items = await db.mock_tests.find({}, {"_id": 0}).to_list(10000)
+    if not items:
+        return {"count": 0, "avg": 0, "best": 0, "worst": 0, "trend": []}
+    pcts = [m["percentage"] for m in items]
+    sorted_items = sorted(items, key=lambda x: x["date"])
+    return {
+        "count": len(items),
+        "avg": round(sum(pcts) / len(pcts), 2),
+        "best": max(pcts),
+        "worst": min(pcts),
+        "trend": [{"date": m["date"], "name": m["name"], "percentage": m["percentage"]} for m in sorted_items],
+    }
 
 
 app.include_router(api_router)
