@@ -78,6 +78,10 @@
   }
   .menu-toggle{display:none}
   textarea.nb-input{min-height:160px; resize:vertical}
+  @keyframes pulse {
+    0%,100% { transform: scale(1); box-shadow: 3px 3px 0 var(--ink); }
+    50%     { transform: scale(1.05); box-shadow: 5px 5px 0 var(--ink); }
+  }
 </style>
 </head>
 <body>
@@ -552,6 +556,8 @@ let audioUnlocked = false;        // true once user gesture has primed audio
 let sharedAudioCtx = null;        // reused AudioContext (must be created on user gesture)
 let activeBeepTimers = [];        // running default-beep timeouts (so we can stop)
 let activeMusicEl = null;         // running uploaded-music <audio> (so we can stop)
+let audioPlaying = false;         // true while alarm sound (music or beeps) is currently audible
+let editingAlarmId = null;        // UI: id of alarm currently in edit mode
 
 function curMinute(d=new Date()){
   return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
@@ -599,22 +605,47 @@ function stopAlarm(){
   activeBeepTimers.forEach(id=>clearTimeout(id));
   activeBeepTimers = [];
   if (activeMusicEl){ try { activeMusicEl.pause(); activeMusicEl.currentTime = 0; } catch(e){} activeMusicEl = null; }
+  audioPlaying = false;
+  updateStopFab();
+  if (titleFlashTimer) { clearInterval(titleFlashTimer); titleFlashTimer = null; document.title = "Studi · Daily Study Tracker"; }
 }
 
-function playAlarm(){
+function updateStopFab(){
+  let fab = document.getElementById("stop-alarm-fab");
+  if (audioPlaying){
+    if (!fab) {
+      fab = document.createElement("button");
+      fab.id = "stop-alarm-fab";
+      fab.className = "nb-btn";
+      fab.style.cssText = "position:fixed; bottom:90px; right:20px; z-index:35; padding:14px 20px; background:#FF6B6B; font-weight:800; font-size:16px; animation:pulse 1.2s ease-in-out infinite;";
+      fab.innerHTML = "🔇 Stop alarm";
+      fab.onclick = ()=>{ stopAlarm(); };
+      document.body.appendChild(fab);
+    }
+  } else {
+    if (fab) fab.remove();
+  }
+}
+
+function playAlarm(soundUrl){
   stopAlarm();
-  // 1) If user uploaded music, play that (looping for ~12s)
-  if (state.music?.dataUrl){
+  audioPlaying = true;
+  updateStopFab();
+  const url = soundUrl || state.music?.dataUrl;
+  // 1) If a sound URL is supplied (per-alarm or global), play it ONCE
+  if (url){
     try {
-      const a = new Audio(state.music.dataUrl);
-      a.loop = true; a.volume = 1;
+      const a = new Audio(url);
+      a.loop = false; a.volume = 1;
       activeMusicEl = a;
+      a.onended = ()=>{ audioPlaying = false; activeMusicEl = null; updateStopFab(); };
       const p = a.play();
       if (p && p.catch) p.catch(err => {
         console.warn("music play blocked", err);
-        defaultBeepLoop(); // fallback
+        defaultBeepLoop(); // fallback to beeps
       });
-      activeBeepTimers.push(setTimeout(stopAlarm, 12000));
+      // safety auto-stop after 60s
+      activeBeepTimers.push(setTimeout(()=>{ stopAlarm(); }, 60000));
       return;
     } catch(e){ console.warn(e); }
   }
@@ -640,7 +671,11 @@ function defaultBeepLoop(){
       g.gain.linearRampToValueAtTime(0, t0 + 0.4);
       o.start(t0); o.stop(t0 + 0.45);
     }
-  } catch(e){ console.warn("beep failed", e); }
+    // mark playing & schedule auto-clear at end of pattern
+    audioPlaying = true;
+    updateStopFab();
+    activeBeepTimers.push(setTimeout(()=>{ audioPlaying = false; updateStopFab(); }, (PATTERN * GAP * 1000) + 200));
+  } catch(e){ console.warn("beep failed", e); audioPlaying = false; updateStopFab(); }
 }
 
 function showAlarmToast(msg, opts){
@@ -719,7 +754,9 @@ function fireAlarm(alarm, kind){
   const k = `${dayKey()}-${alarm.id}-${kind}`;
   if (alarmsTriggered.has(k)) return;
   alarmsTriggered.add(k);
-  playAlarm();
+  // Per-alarm sound takes precedence over global music; falls back to default beep
+  const perAlarmSound = kind === "start" ? alarm.startMusicData : alarm.endMusicData;
+  playAlarm(perAlarmSound || null);
   const verb = kind === "start" ? "starting" : "ended";
   const symbol = kind === "start" ? "▶" : "⏹";
   showAlarmToast(`${symbol} ${alarm.label || "Study block"} ${verb}`, { alarm, kind, checkin: kind === "start" });
@@ -788,18 +825,19 @@ VIEW_FNS.schedule = (el) => {
     </div>
 
     <div class="nb-card p-6 mt-6">
-      <h3 class="h-display text-xl font-extrabold mb-3">🎵 Alarm Sound</h3>
-      <p class="text-sm mb-3" style="color:var(--ink-soft)">For alarms to ring, this tab/PWA must stay open AND you must have interacted with the page at least once (browser autoplay rules). Tap <b>Test alarm</b> above to verify it works on your device.</p>
+      <h3 class="h-display text-xl font-extrabold mb-3">🎵 Default Alarm Sound</h3>
+      <p class="text-sm mb-3" style="color:var(--ink-soft)">Plays whenever an alarm doesn't have its own custom start/end music. (To set per-alarm sounds, tap <b>✏ Edit</b> on any alarm below.)</p>
+      <p class="text-sm mb-3" style="color:var(--ink-soft)">For alarms to ring, this tab/PWA must stay open AND you must have interacted with the page at least once (browser autoplay rules). Tap <b>▶ Test alarm</b> above to verify.</p>
       <div class="flex flex-wrap items-center gap-3">
         <label class="cursor-pointer nb-btn px-4 py-2 inline-flex items-center gap-2" style="background:#B388FF">
-          ⬆ Upload your music
+          ⬆ Upload default music
           <input id="music-input" type="file" accept="audio/*" class="hidden" style="display:none" />
         </label>
         ${state.music ? `
           <span class="text-sm" style="color:var(--ink-soft)">Loaded: <span class="font-bold">${escapeHtml(state.music.name)}</span></span>
           <button id="preview-music" class="nb-btn bg-white px-3 py-1.5 text-xs">Preview</button>
-          <button id="clear-music" class="nb-btn px-3 py-1.5 text-xs" style="background:#FF6B6B">Remove</button>
-        ` : `<span class="text-sm" style="color:var(--ink-soft)">Default beep pattern will be used.</span>`}
+          <button id="clear-music" class="nb-btn px-3 py-1.5 text-xs" style="background:#FF6B6B">✕ Clear</button>
+        ` : `<span class="text-sm" style="color:var(--ink-soft)">No default uploaded — beep pattern will be used.</span>`}
       </div>
     </div>
 
@@ -839,7 +877,7 @@ VIEW_FNS.schedule = (el) => {
     r.readAsDataURL(f);
   };
   if (state.music){
-    document.getElementById("preview-music").onclick = ()=>{ unlockAudio(); try { const a = new Audio(state.music.dataUrl); a.play(); } catch(e){} };
+    document.getElementById("preview-music").onclick = ()=>{ unlockAudio(); playAlarm(state.music.dataUrl); };
     document.getElementById("clear-music").onclick = ()=>{ state.music=null; save(); render(); };
   }
   document.getElementById("alarm-form").onsubmit = (e)=>{
@@ -848,7 +886,9 @@ VIEW_FNS.schedule = (el) => {
       label: document.getElementById("a-label").value || "Study block",
       subjectId: document.getElementById("a-subj").value || "",
       startTime: document.getElementById("a-start").value,
-      endTime: document.getElementById("a-end").value });
+      endTime: document.getElementById("a-end").value,
+      startMusicName: "", startMusicData: "",
+      endMusicName: "", endMusicData: "" });
     save(); render();
   };
   const al = document.getElementById("alarm-list");
@@ -857,36 +897,134 @@ VIEW_FNS.schedule = (el) => {
   } else {
     al.innerHTML = state.alarms.map(a=>{
       const linked = a.subjectId ? state.subjects.find(s=>s.id===a.subjectId) : null;
+      const editing = editingAlarmId === a.id;
+      if (editing) {
+        return `
+          <div class="nb-card p-5" style="background:#FFF7E3" data-alarm="${a.id}">
+            <div class="flex items-center gap-3 mb-3">
+              <span style="font-size:24px">✏️</span>
+              <span class="h-display font-bold text-base">Editing alarm</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+              <input class="md:col-span-6 nb-input" data-f="label" placeholder="Label" value="${escapeHtml(a.label||'')}" />
+              <select class="md:col-span-6 nb-input" data-f="subj">
+                <option value="">No subject linked</option>
+                ${state.subjects.map(s=>`<option value="${s.id}" ${s.id===a.subjectId?'selected':''}>${escapeHtml(s.name)}</option>`).join("")}
+              </select>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+              <div class="nb-card-soft p-3">
+                <div class="text-xs font-bold uppercase tracking-widest mb-2" style="color:var(--ink-soft)">▶ Start</div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <input class="nb-input flex-shrink-0" style="width:130px" type="time" data-f="startTime" value="${a.startTime}" />
+                  <span class="text-xs" style="color:var(--ink-soft)">sound:</span>
+                  ${a.startMusicData ? `<span class="sticker text-xs" style="background:#FFD600">🎵 ${escapeHtml(a.startMusicName||'custom')}</span>` : `<span class="text-xs" style="color:var(--ink-soft)">default beep</span>`}
+                  <label class="cursor-pointer nb-btn px-3 py-1 text-xs" style="background:#B388FF">
+                    ⬆ ${a.startMusicData?'Replace':'Upload'}
+                    <input type="file" accept="audio/*" class="hidden" style="display:none" data-music="start" />
+                  </label>
+                  ${a.startMusicData ? `<button class="nb-btn px-3 py-1 text-xs" style="background:#FF6B6B" data-clear="start">✕ Clear</button>` : ''}
+                  ${a.startMusicData ? `<button class="nb-btn px-3 py-1 text-xs" style="background:#fff" data-preview="start">▶ Preview</button>` : ''}
+                </div>
+              </div>
+              <div class="nb-card-soft p-3">
+                <div class="text-xs font-bold uppercase tracking-widest mb-2" style="color:var(--ink-soft)">⏹ End</div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <input class="nb-input flex-shrink-0" style="width:130px" type="time" data-f="endTime" value="${a.endTime}" />
+                  <span class="text-xs" style="color:var(--ink-soft)">sound:</span>
+                  ${a.endMusicData ? `<span class="sticker text-xs" style="background:#FF6B6B">🎵 ${escapeHtml(a.endMusicName||'custom')}</span>` : `<span class="text-xs" style="color:var(--ink-soft)">default beep</span>`}
+                  <label class="cursor-pointer nb-btn px-3 py-1 text-xs" style="background:#B388FF">
+                    ⬆ ${a.endMusicData?'Replace':'Upload'}
+                    <input type="file" accept="audio/*" class="hidden" style="display:none" data-music="end" />
+                  </label>
+                  ${a.endMusicData ? `<button class="nb-btn px-3 py-1 text-xs" style="background:#FF6B6B" data-clear="end">✕ Clear</button>` : ''}
+                  ${a.endMusicData ? `<button class="nb-btn px-3 py-1 text-xs" style="background:#fff" data-preview="end">▶ Preview</button>` : ''}
+                </div>
+              </div>
+            </div>
+            <div class="mt-4 flex items-center gap-2 flex-wrap">
+              <button class="nb-btn px-4 py-2 text-sm" style="background:#00C896" data-save>✓ Save changes</button>
+              <button class="nb-btn px-4 py-2 text-sm" style="background:#fff" data-cancel>Cancel</button>
+            </div>
+          </div>`;
+      }
       return `
-      <div class="nb-card p-4 flex items-center justify-between gap-4">
-        <div class="flex items-center gap-4 min-w-0 flex-1">
-          <span style="font-size:28px">⏰</span>
-          <div class="min-w-0">
-            <div class="h-display font-bold text-lg truncate">${escapeHtml(a.label)}</div>
-            <div class="text-xs mt-1 flex items-center gap-2 flex-wrap">
-              <span class="chip-black" style="background:#FFD600">${a.startTime}</span>
-              <span style="color:var(--ink-soft)">→</span>
-              <span class="chip-black" style="background:#FF6B6B">${a.endTime}</span>
-              ${linked ? `<span class="sticker text-xs" style="background:${linked.color||'#5BC0EB'}">📚 ${escapeHtml(linked.name)}</span>` : ''}
+        <div class="nb-card p-4 flex items-center justify-between gap-4" data-alarm="${a.id}">
+          <div class="flex items-center gap-4 min-w-0 flex-1">
+            <span style="font-size:28px">⏰</span>
+            <div class="min-w-0">
+              <div class="h-display font-bold text-lg truncate">${escapeHtml(a.label)}</div>
+              <div class="text-xs mt-1 flex items-center gap-2 flex-wrap">
+                <span class="chip-black" style="background:#FFD600">${a.startTime}</span>
+                <span style="color:var(--ink-soft)">→</span>
+                <span class="chip-black" style="background:#FF6B6B">${a.endTime}</span>
+                ${linked ? `<span class="sticker text-xs" style="background:${linked.color||'#5BC0EB'}">📚 ${escapeHtml(linked.name)}</span>` : ''}
+                ${a.startMusicData ? `<span class="sticker text-xs" style="background:#FFD600">🎵 start</span>` : ''}
+                ${a.endMusicData ? `<span class="sticker text-xs" style="background:#FF6B6B">🎵 end</span>` : ''}
+              </div>
             </div>
           </div>
-        </div>
-        <div class="flex items-center gap-2">
-          <button class="nb-btn px-3 py-1.5 text-xs" style="background:#FFD600" data-test="${a.id}">▶ Test</button>
-          <button class="nb-btn p-2" style="background:#FF6B6B" data-id="${a.id}">🗑</button>
-        </div>
-      </div>`;
+          <div class="flex items-center gap-2 flex-wrap justify-end">
+            <button class="nb-btn px-3 py-1.5 text-xs" style="background:#FFD600" data-test="${a.id}">▶ Test</button>
+            <button class="nb-btn px-3 py-1.5 text-xs" style="background:#fff" data-edit="${a.id}">✏ Edit</button>
+            <button class="nb-btn p-2" style="background:#FF6B6B" data-id="${a.id}">🗑</button>
+          </div>
+        </div>`;
     }).join("");
+
+    // Wire static (non-edit) row buttons
     al.querySelectorAll("button[data-id]").forEach(b=>b.onclick=()=>{
+      if (!confirm("Delete this alarm?")) return;
       state.alarms = state.alarms.filter(x=>x.id!==b.dataset.id); save(); render();
     });
+    al.querySelectorAll("button[data-edit]").forEach(b=>b.onclick=()=>{ editingAlarmId = b.dataset.edit; render(); });
     al.querySelectorAll("button[data-test]").forEach(b=>b.onclick=()=>{
       unlockAudio();
       const a = state.alarms.find(x=>x.id===b.dataset.test);
-      if (a) {
-        playAlarm();
-        showAlarmToast(`▶ ${a.label || "Study block"} (test)`, { alarm:a, kind:"start", checkin: state.subjects.length>0 });
-      }
+      if (!a) return;
+      // Test plays the START sound first; user can toggle off.
+      playAlarm(a.startMusicData || null);
+      showAlarmToast(`▶ ${a.label || "Study block"} (test)`, { alarm:a, kind:"start", checkin: state.subjects.length>0 });
+    });
+
+    // Wire edit-mode row controls (only one row may be in edit mode at a time)
+    al.querySelectorAll("[data-alarm]").forEach(row=>{
+      const id = row.dataset.alarm;
+      if (editingAlarmId !== id) return;
+      const a = state.alarms.find(x=>x.id===id);
+      if (!a) return;
+      const get = (sel)=> row.querySelector(sel);
+      const cancel = ()=>{ editingAlarmId = null; render(); };
+      get("[data-cancel]").onclick = cancel;
+      get("[data-save]").onclick = ()=>{
+        a.label = get('[data-f="label"]').value || "Study block";
+        a.subjectId = get('[data-f="subj"]').value || "";
+        a.startTime = get('[data-f="startTime"]').value;
+        a.endTime = get('[data-f="endTime"]').value;
+        editingAlarmId = null;
+        save(); render();
+      };
+      // Music uploads (start & end)
+      row.querySelectorAll('[data-music]').forEach(inp=>inp.onchange = (e)=>{
+        const f = e.target.files?.[0]; if (!f) return;
+        const r = new FileReader();
+        r.onload = ()=>{
+          if (inp.dataset.music === "start"){ a.startMusicData = r.result; a.startMusicName = f.name; }
+          else { a.endMusicData = r.result; a.endMusicName = f.name; }
+          save(); render();
+        };
+        r.readAsDataURL(f);
+      });
+      row.querySelectorAll('[data-clear]').forEach(b=>b.onclick=()=>{
+        if (b.dataset.clear === "start"){ a.startMusicData = ""; a.startMusicName = ""; }
+        else { a.endMusicData = ""; a.endMusicName = ""; }
+        save(); render();
+      });
+      row.querySelectorAll('[data-preview]').forEach(b=>b.onclick=()=>{
+        unlockAudio();
+        const url = b.dataset.preview === "start" ? a.startMusicData : a.endMusicData;
+        if (url) playAlarm(url);
+      });
     });
   }
 };

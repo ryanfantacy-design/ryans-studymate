@@ -51,6 +51,26 @@ One self-contained `index.html`. **Installable as a PWA**. No backend, no signup
 
 After first visit, browsers cache these aggressively, so the app works mostly offline. For full offline-first behavior you can later add a service-worker file beside `index.html`, but the single-file PWA happily installs + runs without one.
 
+## Editing alarms & per-alarm sounds
+
+Each alarm can be **edited in place** — tap **✏ Edit** on any alarm row to:
+- Change the **label** and **linked subject**
+- Adjust **start / end times**
+- Upload a **custom start sound** AND a **separate end sound** for that specific alarm (different MP3/WAV/etc. for the begin-vs-end ring)
+- **Replace** an uploaded sound any time, **clear** it (revert to default), or **▶ Preview** it
+
+If an alarm has no per-alarm sound, Studi falls back to the **default alarm sound** at the top of the Schedule tab. If that's also empty, it plays the built-in beep pattern.
+
+Each alarm shows tiny **🎵 start** / **🎵 end** stickers when it has a custom sound configured.
+
+## Stopping alarms anytime
+
+When an alarm rings, you'll see two ways to stop it:
+1. The yellow **toast at the top of the screen** has a **Stop** button (and a green **▶ Start studying** button if the alarm has a linked subject — see below).
+2. A pulsing red **🔇 Stop alarm** button floats at the bottom-right of the screen and stays visible until the sound stops. Tap it to silence everything immediately.
+
+Sounds also auto-stop after 60 seconds for safety.
+
 ## Browser notifications & alarms — make sure they ring!
 
 Modern browsers block sound until you've interacted with the page (it's a privacy/UX rule, not a Studi bug). Studi handles this gracefully, but you should:
