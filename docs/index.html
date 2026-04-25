@@ -545,48 +545,192 @@ function pomoStart(){
 }
 
 /* =================== SCHEDULE =================== */
-let alarmsTriggered = new Set();
+/* =================== SCHEDULE & ALARMS =================== */
+let alarmsTriggered = new Set(); // dayKey-id-kind
+let lastTickMinute = "";          // "HH:MM" of previous tick — used to catch up across throttled gaps
+let audioUnlocked = false;        // true once user gesture has primed audio
+let sharedAudioCtx = null;        // reused AudioContext (must be created on user gesture)
+let activeBeepTimers = [];        // running default-beep timeouts (so we can stop)
+let activeMusicEl = null;         // running uploaded-music <audio> (so we can stop)
+
+function curMinute(d=new Date()){
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+function dayKey(d=new Date()){ return d.toISOString().slice(0,10); }
+
+// Returns true if `t` (HH:MM) falls strictly after `from` and on/before `to` within the same day.
+function timeInWindow(t, from, to){
+  if (!t || !from || !to) return false;
+  if (from === to) return t === to;
+  if (from < to) return t > from && t <= to;
+  // wrap past midnight (e.g., 23:59 → 00:00)
+  return t > from || t <= to;
+}
+
+// Try to unlock audio playback on first user interaction (required by browser autoplay policies)
+function unlockAudio(){
+  if (audioUnlocked) return;
+  try {
+    sharedAudioCtx = sharedAudioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    if (sharedAudioCtx.state === "suspended") sharedAudioCtx.resume();
+    // play a 1-frame silent buffer to "prime" iOS Safari
+    const buf = sharedAudioCtx.createBuffer(1, 1, 22050);
+    const src = sharedAudioCtx.createBufferSource();
+    src.buffer = buf; src.connect(sharedAudioCtx.destination); src.start(0);
+    audioUnlocked = true;
+    updateSoundBadge();
+  } catch(e){ console.warn("audio unlock failed", e); }
+}
+["click","touchstart","keydown","pointerdown"].forEach(ev=>{
+  window.addEventListener(ev, unlockAudio, { once:false, passive:true });
+});
+
+function updateSoundBadge(){
+  const el = document.getElementById("sound-status");
+  if (!el) return;
+  if (audioUnlocked){
+    el.style.background = "#00C896"; el.textContent = "🔊 Sound ready";
+  } else {
+    el.style.background = "#FF6B6B"; el.textContent = "⚠ Tap anywhere to enable sound";
+  }
+}
+
+function stopAlarm(){
+  activeBeepTimers.forEach(id=>clearTimeout(id));
+  activeBeepTimers = [];
+  if (activeMusicEl){ try { activeMusicEl.pause(); activeMusicEl.currentTime = 0; } catch(e){} activeMusicEl = null; }
+}
+
+function playAlarm(){
+  stopAlarm();
+  // 1) If user uploaded music, play that (looping for ~12s)
+  if (state.music?.dataUrl){
+    try {
+      const a = new Audio(state.music.dataUrl);
+      a.loop = true; a.volume = 1;
+      activeMusicEl = a;
+      const p = a.play();
+      if (p && p.catch) p.catch(err => {
+        console.warn("music play blocked", err);
+        defaultBeepLoop(); // fallback
+      });
+      activeBeepTimers.push(setTimeout(stopAlarm, 12000));
+      return;
+    } catch(e){ console.warn(e); }
+  }
+  defaultBeepLoop();
+}
+
+function defaultBeepLoop(){
+  try {
+    sharedAudioCtx = sharedAudioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    if (sharedAudioCtx.state === "suspended") sharedAudioCtx.resume();
+    const ctx = sharedAudioCtx;
+    // 8 attention-grabbing beeps over ~6s, alternating frequency
+    const PATTERN = 8, GAP = 0.7;
+    for (let i = 0; i < PATTERN; i++){
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = i % 2 ? "square" : "sine";
+      o.frequency.value = i % 2 ? 660 : 990;
+      o.connect(g); g.connect(ctx.destination);
+      const t0 = ctx.currentTime + i * GAP;
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.4, t0 + 0.02);
+      g.gain.linearRampToValueAtTime(0, t0 + 0.4);
+      o.start(t0); o.stop(t0 + 0.45);
+    }
+  } catch(e){ console.warn("beep failed", e); }
+}
+
+function showAlarmToast(msg){
+  const root = document.getElementById("modal-root");
+  const id = "toast-" + Date.now();
+  const el = document.createElement("div");
+  el.id = id;
+  el.className = "nb-card";
+  el.style.cssText = "position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:60; padding:14px 20px; background:#FFD600; display:flex; align-items:center; gap:14px; max-width:90vw;";
+  el.innerHTML = `<span style="font-size:28px">⏰</span>
+    <div class="flex-1">
+      <div class="h-display font-extrabold text-lg">${escapeHtml(msg)}</div>
+      <div class="text-xs" style="color:var(--ink-soft)">Tap to dismiss</div>
+    </div>
+    <button class="nb-btn px-3 py-1 text-xs" style="background:#fff">Stop</button>`;
+  root.appendChild(el);
+  const dismiss = ()=>{ stopAlarm(); el.remove(); };
+  el.onclick = dismiss;
+  el.querySelector("button").onclick = (ev)=>{ ev.stopPropagation(); dismiss(); };
+  setTimeout(()=>{ if (document.getElementById(id)) document.getElementById(id).remove(); }, 15000);
+  // Visual document-title flasher (helps when tab is in background)
+  flashTitle("⏰ " + msg);
+  // Vibrate on supported devices
+  if (navigator.vibrate) try { navigator.vibrate([300,150,300,150,300]); } catch(e){}
+}
+
+let titleFlashTimer = null;
+function flashTitle(msg){
+  const orig = "Studi · Daily Study Tracker";
+  if (titleFlashTimer) { clearInterval(titleFlashTimer); document.title = orig; }
+  let on = true; let count = 0;
+  titleFlashTimer = setInterval(()=>{
+    document.title = on ? msg : orig;
+    on = !on; count++;
+    if (count > 14) { clearInterval(titleFlashTimer); titleFlashTimer = null; document.title = orig; }
+  }, 700);
+}
+
+function fireAlarm(alarm, kind){
+  const k = `${dayKey()}-${alarm.id}-${kind}`;
+  if (alarmsTriggered.has(k)) return;
+  alarmsTriggered.add(k);
+  playAlarm();
+  const verb = kind === "start" ? "starting" : "ended";
+  const symbol = kind === "start" ? "▶" : "⏹";
+  showAlarmToast(`${symbol} ${alarm.label || "Study block"} ${verb}`);
+  if ("Notification" in window && Notification.permission === "granted"){
+    try { new Notification("Studi", { body:`${symbol} ${alarm.label || "Study block"} ${verb}`, icon:"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23FFD600'/><text x='32' y='44' text-anchor='middle' font-size='38' font-family='sans-serif' font-weight='800' fill='%231a1a2e'>S</text></svg>" }); } catch(e){}
+  }
+}
+
 function alarmsTick(){
   const now = new Date();
-  const cur = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
-  const dayKey = now.toISOString().slice(0,10);
+  const cur = curMinute(now);
+  if (cur === lastTickMinute) return;       // only act on minute change
+  const prev = lastTickMinute || cur;        // first tick: check exact only
+  lastTickMinute = cur;
+
   state.alarms.forEach(a=>{
     [["start",a.startTime],["end",a.endTime]].forEach(([kind,time])=>{
-      if (time===cur){
-        const k = `${dayKey}-${a.id}-${kind}`;
-        if (!alarmsTriggered.has(k)){
-          alarmsTriggered.add(k); playAlarm();
-          if ("Notification" in window && Notification.permission==="granted"){
-            try { new Notification("Studi", { body:`${kind==='start'?'▶':'⏹'} ${a.label||'Study block'} ${kind}` }); } catch(e){}
-          }
-        }
-      }
+      if (!time) return;
+      // First-tick of session: exact match only
+      // Subsequent ticks: trigger if alarm time is in (prev, cur] window — handles throttled / suspended tabs
+      const hit = (prev === cur) ? (time === cur) : timeInWindow(time, prev, cur);
+      if (hit) fireAlarm(a, kind);
     });
   });
 }
-function playAlarm(){
-  if (state.music?.dataUrl){ try { const a=new Audio(state.music.dataUrl); a.play().catch(()=>{}); } catch(e){} }
-  else {
-    try{
-      const ctx=new (window.AudioContext||window.webkitAudioContext)();
-      for (let i=0;i<3;i++){
-        const o=ctx.createOscillator(), g=ctx.createGain();
-        o.connect(g); g.connect(ctx.destination); o.frequency.value=880;
-        g.gain.setValueAtTime(0.25,ctx.currentTime+i*0.4);
-        o.start(ctx.currentTime+i*0.4); o.stop(ctx.currentTime+i*0.4+0.3);
-      }
-    }catch(e){}
-  }
+
+// Reset day-bucket when day changes (so alarms fire again next day)
+function pruneTriggered(){
+  const today = dayKey();
+  alarmsTriggered = new Set([...alarmsTriggered].filter(k=>k.startsWith(today)));
 }
+setInterval(pruneTriggered, 60_000);
+
+// Catch up when tab becomes visible after being throttled
+document.addEventListener("visibilitychange", ()=>{
+  if (!document.hidden) alarmsTick();
+});
+
 setInterval(()=>{
   alarmsTick();
-  // live clock
   if (active==="schedule"){
     const c = document.getElementById("big-clock");
     if (c){
       const n = new Date();
       c.textContent = n.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false});
     }
+    updateSoundBadge();
   }
 }, 1000);
 
@@ -595,7 +739,11 @@ VIEW_FNS.schedule = (el) => {
   el.innerHTML = `
     <div class="flex items-center justify-between flex-wrap gap-4">
       ${pageTitle("Schedule","#B388FF")}
-      <button id="ask-notif" class="nb-btn bg-white px-3 py-1.5 text-xs">Enable browser notifications</button>
+      <div class="flex items-center gap-2 flex-wrap">
+        <span id="sound-status" class="sticker text-xs" style="background:${audioUnlocked?'#00C896':'#FF6B6B'}">${audioUnlocked?'🔊 Sound ready':'⚠ Tap anywhere to enable sound'}</span>
+        <button id="test-alarm" class="nb-btn px-3 py-1.5 text-xs" style="background:#FFD600">▶ Test alarm</button>
+        <button id="ask-notif" class="nb-btn bg-white px-3 py-1.5 text-xs">Enable browser notifications</button>
+      </div>
     </div>
     <div class="nb-card p-8 text-center mt-2" style="background:linear-gradient(135deg,#FFD600,#FFB38A)">
       <div class="text-xs tracking-widest uppercase mb-2 font-bold">current time</div>
@@ -605,6 +753,7 @@ VIEW_FNS.schedule = (el) => {
 
     <div class="nb-card p-6 mt-6">
       <h3 class="h-display text-xl font-extrabold mb-3">🎵 Alarm Sound</h3>
+      <p class="text-sm mb-3" style="color:var(--ink-soft)">For alarms to ring, this tab/PWA must stay open AND you must have interacted with the page at least once (browser autoplay rules). Tap <b>Test alarm</b> above to verify it works on your device.</p>
       <div class="flex flex-wrap items-center gap-3">
         <label class="cursor-pointer nb-btn px-4 py-2 inline-flex items-center gap-2" style="background:#B388FF">
           ⬆ Upload your music
@@ -614,7 +763,7 @@ VIEW_FNS.schedule = (el) => {
           <span class="text-sm" style="color:var(--ink-soft)">Loaded: <span class="font-bold">${escapeHtml(state.music.name)}</span></span>
           <button id="preview-music" class="nb-btn bg-white px-3 py-1.5 text-xs">Preview</button>
           <button id="clear-music" class="nb-btn px-3 py-1.5 text-xs" style="background:#FF6B6B">Remove</button>
-        ` : `<span class="text-sm" style="color:var(--ink-soft)">Default beep will be used.</span>`}
+        ` : `<span class="text-sm" style="color:var(--ink-soft)">Default beep pattern will be used.</span>`}
       </div>
     </div>
 
@@ -629,7 +778,19 @@ VIEW_FNS.schedule = (el) => {
 
     <div id="alarm-list" class="space-y-3 mt-6"></div>
   `;
-  document.getElementById("ask-notif").onclick = ()=>{ if ("Notification" in window) Notification.requestPermission(); };
+  document.getElementById("test-alarm").onclick = ()=>{
+    unlockAudio();
+    showAlarmToast("Test alarm — this is how it will sound");
+  };
+  document.getElementById("ask-notif").onclick = ()=>{
+    if ("Notification" in window) {
+      Notification.requestPermission().then(p=>{
+        if (p === "granted") {
+          try { new Notification("Studi", { body:"Notifications enabled ✅" }); } catch(e){}
+        }
+      });
+    }
+  };
   document.getElementById("music-input").onchange = (e)=>{
     const f = e.target.files?.[0]; if (!f) return;
     const r = new FileReader();
@@ -637,7 +798,7 @@ VIEW_FNS.schedule = (el) => {
     r.readAsDataURL(f);
   };
   if (state.music){
-    document.getElementById("preview-music").onclick = ()=>{ try { new Audio(state.music.dataUrl).play(); } catch(e){} };
+    document.getElementById("preview-music").onclick = ()=>{ unlockAudio(); try { const a = new Audio(state.music.dataUrl); a.play(); } catch(e){} };
     document.getElementById("clear-music").onclick = ()=>{ state.music=null; save(); render(); };
   }
   document.getElementById("alarm-form").onsubmit = (e)=>{
@@ -654,21 +815,29 @@ VIEW_FNS.schedule = (el) => {
   } else {
     al.innerHTML = state.alarms.map(a=>`
       <div class="nb-card p-4 flex items-center justify-between gap-4">
-        <div class="flex items-center gap-4 min-w-0">
+        <div class="flex items-center gap-4 min-w-0 flex-1">
           <span style="font-size:28px">⏰</span>
           <div class="min-w-0">
             <div class="h-display font-bold text-lg truncate">${escapeHtml(a.label)}</div>
-            <div class="text-xs mt-1 flex items-center gap-2">
+            <div class="text-xs mt-1 flex items-center gap-2 flex-wrap">
               <span class="chip-black" style="background:#FFD600">${a.startTime}</span>
               <span style="color:var(--ink-soft)">→</span>
               <span class="chip-black" style="background:#FF6B6B">${a.endTime}</span>
             </div>
           </div>
         </div>
-        <button class="nb-btn p-2" style="background:#FF6B6B" data-id="${a.id}">🗑</button>
+        <div class="flex items-center gap-2">
+          <button class="nb-btn px-3 py-1.5 text-xs" style="background:#FFD600" data-test="${a.id}">▶ Test</button>
+          <button class="nb-btn p-2" style="background:#FF6B6B" data-id="${a.id}">🗑</button>
+        </div>
       </div>`).join("");
     al.querySelectorAll("button[data-id]").forEach(b=>b.onclick=()=>{
       state.alarms = state.alarms.filter(x=>x.id!==b.dataset.id); save(); render();
+    });
+    al.querySelectorAll("button[data-test]").forEach(b=>b.onclick=()=>{
+      unlockAudio();
+      const a = state.alarms.find(x=>x.id===b.dataset.test);
+      if (a) { playAlarm(); showAlarmToast(`▶ ${a.label || "Study block"} (test)`); }
     });
   }
 };

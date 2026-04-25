@@ -51,8 +51,22 @@ One self-contained `index.html`. **Installable as a PWA**. No backend, no signup
 
 After first visit, browsers cache these aggressively, so the app works mostly offline. For full offline-first behavior you can later add a service-worker file beside `index.html`, but the single-file PWA happily installs + runs without one.
 
-## Browser notifications & alarms
-Schedule → click "Enable browser notifications". Alarms ring with your uploaded music (or a default beep) at exactly the configured `HH:MM` start and end times **while a Studi tab/PWA window is open**.
+## Browser notifications & alarms — make sure they ring!
+
+Modern browsers block sound until you've interacted with the page (it's a privacy/UX rule, not a Studi bug). Studi handles this gracefully, but you should:
+
+1. **Open the Schedule tab** → tap the yellow **"▶ Test alarm"** button. You should hear an attention-grabbing beep pattern (or your uploaded music) and see a yellow toast with a Stop button at the top of the screen.
+2. The "Sound status" badge next to the button should turn **green "🔊 Sound ready"** after your first tap.
+3. Tap **"Enable browser notifications"** to also get OS-level pop-ups (and home-screen badges on installed PWA).
+4. Each alarm row has its own **"▶ Test"** button — use it any time to verify.
+
+**Why an alarm sometimes doesn't ring:**
+- The Studi tab/PWA is **fully closed** (browsers can't play audio if the app isn't running).
+- You haven't tapped **anywhere on the page yet** in this session (sound is locked until first touch).
+- Your phone is on **silent / Do Not Disturb / mute switch**.
+- The browser tab was **frozen** in the background for many minutes — Studi auto-catches up the moment you switch back to it (visibility change), but the audio plays at that moment, not at the original schedule time.
+
+For best reliability, install Studi as a PWA (Add to Home Screen) and keep it in the recents list — phones treat installed PWAs more leniently than backgrounded tabs.
 
 ## Reset everything
 Settings → "Reset everything" wipes your localStorage. Or DevTools → Application → Local Storage → delete the `studi.v1` key.
