@@ -643,28 +643,64 @@ function defaultBeepLoop(){
   } catch(e){ console.warn("beep failed", e); }
 }
 
-function showAlarmToast(msg){
+function showAlarmToast(msg, opts){
   const root = document.getElementById("modal-root");
   const id = "toast-" + Date.now();
   const el = document.createElement("div");
   el.id = id;
   el.className = "nb-card";
   el.style.cssText = "position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:60; padding:14px 20px; background:#FFD600; display:flex; align-items:center; gap:14px; max-width:90vw;";
+  const showCheckin = !!(opts && opts.checkin);
   el.innerHTML = `<span style="font-size:28px">⏰</span>
     <div class="flex-1">
       <div class="h-display font-extrabold text-lg">${escapeHtml(msg)}</div>
-      <div class="text-xs" style="color:var(--ink-soft)">Tap to dismiss</div>
+      <div class="text-xs" style="color:var(--ink-soft)">${showCheckin?'Tap "Start studying" or Stop':'Tap to dismiss'}</div>
     </div>
-    <button class="nb-btn px-3 py-1 text-xs" style="background:#fff">Stop</button>`;
+    ${showCheckin?'<button class="nb-btn px-3 py-2 text-xs" data-act="checkin" style="background:#00C896">▶ Start studying</button>':''}
+    <button class="nb-btn px-3 py-1 text-xs" data-act="stop" style="background:#fff">Stop</button>`;
   root.appendChild(el);
   const dismiss = ()=>{ stopAlarm(); el.remove(); };
-  el.onclick = dismiss;
-  el.querySelector("button").onclick = (ev)=>{ ev.stopPropagation(); dismiss(); };
-  setTimeout(()=>{ if (document.getElementById(id)) document.getElementById(id).remove(); }, 15000);
-  // Visual document-title flasher (helps when tab is in background)
+  el.addEventListener("click", (ev)=>{
+    const act = ev.target?.closest("[data-act]")?.dataset?.act;
+    if (act === "stop") { ev.stopPropagation(); dismiss(); return; }
+    if (act === "checkin"){
+      ev.stopPropagation();
+      dismiss();
+      startStudyCheckin(opts.alarm);
+      return;
+    }
+    if (!showCheckin) dismiss();
+  });
+  setTimeout(()=>{ if (document.getElementById(id)) document.getElementById(id).remove(); }, 20000);
   flashTitle("⏰ " + msg);
-  // Vibrate on supported devices
   if (navigator.vibrate) try { navigator.vibrate([300,150,300,150,300]); } catch(e){}
+}
+
+// Study check-in: log a 1-min "started" session for the alarm's subject (or first subject) and auto-start the Pomodoro
+function startStudyCheckin(alarm){
+  let subj = null;
+  if (alarm && alarm.subjectId) subj = state.subjects.find(s=>s.id===alarm.subjectId) || null;
+  if (!subj) subj = state.subjects[0] || null;
+  if (!subj){
+    showAlarmToast("Add a subject first to use check-in");
+    active = "subjects"; render();
+    return;
+  }
+  state.sessions.push({
+    id: uid(), subject_id: subj.id, subject_name: subj.name,
+    duration_minutes: 1, notes: `✏️ Started via alarm: ${alarm?.label || "Study block"}`,
+    date: todayStr(), started_at: new Date().toISOString()
+  });
+  save();
+  // Configure & start Pomodoro for this subject
+  const t = pomoTotals();
+  pomoStop();
+  pomoState.mode = "work";
+  pomoState.subjectId = subj.id;
+  pomoState.remaining = t.work;
+  pomoStart();
+  active = "pomodoro";
+  render();
 }
 
 let titleFlashTimer = null;
@@ -686,7 +722,7 @@ function fireAlarm(alarm, kind){
   playAlarm();
   const verb = kind === "start" ? "starting" : "ended";
   const symbol = kind === "start" ? "▶" : "⏹";
-  showAlarmToast(`${symbol} ${alarm.label || "Study block"} ${verb}`);
+  showAlarmToast(`${symbol} ${alarm.label || "Study block"} ${verb}`, { alarm, kind, checkin: kind === "start" });
   if ("Notification" in window && Notification.permission === "granted"){
     try { new Notification("Studi", { body:`${symbol} ${alarm.label || "Study block"} ${verb}`, icon:"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23FFD600'/><text x='32' y='44' text-anchor='middle' font-size='38' font-family='sans-serif' font-weight='800' fill='%231a1a2e'>S</text></svg>" }); } catch(e){}
   }
@@ -769,11 +805,16 @@ VIEW_FNS.schedule = (el) => {
 
     <form id="alarm-form" class="nb-card p-6 mt-6">
       <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
-        <input id="a-label" placeholder="Label (e.g. Math block)" class="md:col-span-5 nb-input" />
+        <input id="a-label" placeholder="Label (e.g. Math block)" class="md:col-span-3 nb-input" />
+        <select id="a-subj" class="md:col-span-3 nb-input">
+          <option value="">No subject linked (optional)</option>
+          ${state.subjects.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}
+        </select>
         <input id="a-start" type="time" value="09:00" class="md:col-span-2 nb-input" />
         <input id="a-end"   type="time" value="10:00" class="md:col-span-2 nb-input" />
-        <button type="submit" class="md:col-span-3 nb-btn px-4 py-2.5 inline-flex items-center justify-center gap-2" style="background:#B388FF">+ Add alarm</button>
+        <button type="submit" class="md:col-span-2 nb-btn px-4 py-2.5 inline-flex items-center justify-center gap-2" style="background:#B388FF">+ Add</button>
       </div>
+      <p class="text-xs mt-3" style="color:var(--ink-soft)">💡 Linking a subject lets the start-time alarm offer a one-tap <b>"Start studying"</b> button — it logs a session and auto-starts the Pomodoro for you.</p>
     </form>
 
     <div id="alarm-list" class="space-y-3 mt-6"></div>
@@ -805,6 +846,7 @@ VIEW_FNS.schedule = (el) => {
     e.preventDefault();
     state.alarms.push({ id:uid(),
       label: document.getElementById("a-label").value || "Study block",
+      subjectId: document.getElementById("a-subj").value || "",
       startTime: document.getElementById("a-start").value,
       endTime: document.getElementById("a-end").value });
     save(); render();
@@ -813,7 +855,9 @@ VIEW_FNS.schedule = (el) => {
   if (state.alarms.length===0){
     al.innerHTML = `<div class="text-center py-8" style="color:var(--ink-soft)">No alarms yet. Schedule your study blocks above.</div>`;
   } else {
-    al.innerHTML = state.alarms.map(a=>`
+    al.innerHTML = state.alarms.map(a=>{
+      const linked = a.subjectId ? state.subjects.find(s=>s.id===a.subjectId) : null;
+      return `
       <div class="nb-card p-4 flex items-center justify-between gap-4">
         <div class="flex items-center gap-4 min-w-0 flex-1">
           <span style="font-size:28px">⏰</span>
@@ -823,6 +867,7 @@ VIEW_FNS.schedule = (el) => {
               <span class="chip-black" style="background:#FFD600">${a.startTime}</span>
               <span style="color:var(--ink-soft)">→</span>
               <span class="chip-black" style="background:#FF6B6B">${a.endTime}</span>
+              ${linked ? `<span class="sticker text-xs" style="background:${linked.color||'#5BC0EB'}">📚 ${escapeHtml(linked.name)}</span>` : ''}
             </div>
           </div>
         </div>
@@ -830,14 +875,18 @@ VIEW_FNS.schedule = (el) => {
           <button class="nb-btn px-3 py-1.5 text-xs" style="background:#FFD600" data-test="${a.id}">▶ Test</button>
           <button class="nb-btn p-2" style="background:#FF6B6B" data-id="${a.id}">🗑</button>
         </div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
     al.querySelectorAll("button[data-id]").forEach(b=>b.onclick=()=>{
       state.alarms = state.alarms.filter(x=>x.id!==b.dataset.id); save(); render();
     });
     al.querySelectorAll("button[data-test]").forEach(b=>b.onclick=()=>{
       unlockAudio();
       const a = state.alarms.find(x=>x.id===b.dataset.test);
-      if (a) { playAlarm(); showAlarmToast(`▶ ${a.label || "Study block"} (test)`); }
+      if (a) {
+        playAlarm();
+        showAlarmToast(`▶ ${a.label || "Study block"} (test)`, { alarm:a, kind:"start", checkin: state.subjects.length>0 });
+      }
     });
   }
 };

@@ -55,10 +55,17 @@ After first visit, browsers cache these aggressively, so the app works mostly of
 
 Modern browsers block sound until you've interacted with the page (it's a privacy/UX rule, not a Studi bug). Studi handles this gracefully, but you should:
 
-1. **Open the Schedule tab** → tap the yellow **"▶ Test alarm"** button. You should hear an attention-grabbing beep pattern (or your uploaded music) and see a yellow toast with a Stop button at the top of the screen.
+1. **Open the Schedule tab** → tap the yellow **"▶ Test alarm"** button. You should hear an attention-grabbing beep pattern (or your uploaded music) and see a yellow toast at the top of the screen.
 2. The "Sound status" badge next to the button should turn **green "🔊 Sound ready"** after your first tap.
 3. Tap **"Enable browser notifications"** to also get OS-level pop-ups (and home-screen badges on installed PWA).
 4. Each alarm row has its own **"▶ Test"** button — use it any time to verify.
+
+### One-tap "Start studying" check-in
+When you create an alarm, you can **link it to a subject**. At the alarm's start time, the toast shows a green **"▶ Start studying"** button — tap it to:
+- log a 1-minute "Started via alarm" session for that subject (keeps your streak alive on bad days),
+- and **auto-jump to Pomodoro + start the work timer** for the same subject.
+
+If the alarm has no linked subject, Studi falls back to your first subject. Add at least one subject before relying on check-in.
 
 **Why an alarm sometimes doesn't ring:**
 - The Studi tab/PWA is **fully closed** (browsers can't play audio if the app isn't running).
