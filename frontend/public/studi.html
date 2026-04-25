@@ -2,10 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Studi · Daily Study Tracker</title>
 <meta name="description" content="A playful daily study tracker — subjects, pomodoro, schedule, journal, mock tests. Saves to your browser. 100% free, no signup." />
+<meta name="theme-color" content="#FFD600" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Studi" />
 <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23FFD600' stroke='%231a1a2e' stroke-width='4'/><text x='32' y='44' text-anchor='middle' font-size='38' font-family='sans-serif' font-weight='800' fill='%231a1a2e'>S</text></svg>" />
+<link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' fill='%23FFD600'/><rect x='40' y='40' width='432' height='432' rx='80' fill='%23FFD600' stroke='%231a1a2e' stroke-width='20'/><text x='256' y='360' text-anchor='middle' font-family='Arial Black,sans-serif' font-size='320' font-weight='900' fill='%231a1a2e'>S</text></svg>" />
 
 <!-- Tailwind via Play CDN -->
 <script src="https://cdn.tailwindcss.com"></script>
@@ -101,6 +106,19 @@
 
 <!-- Modal root -->
 <div id="modal-root"></div>
+
+<!-- PWA install FAB (Android/Desktop) -->
+<button id="install-fab" style="display:none; position:fixed; bottom:20px; right:20px; z-index:30; background:#FFD600;" class="nb-btn px-4 py-3 inline-flex items-center gap-2">⬇ Install Studi</button>
+
+<!-- iOS install hint (shows once for iPhone/iPad Safari) -->
+<div id="ios-hint" style="display:none; position:fixed; left:16px; right:16px; bottom:16px; z-index:30; padding:14px 16px; background:#FFFFFF;" class="nb-card flex items-start gap-3">
+  <span style="font-size:24px">📲</span>
+  <div class="flex-1 text-sm">
+    <div class="h-display font-extrabold mb-0.5">Install Studi on your home screen</div>
+    <div style="color:var(--ink-soft)">Tap the <b>Share</b> button in Safari, then <b>"Add to Home Screen"</b>.</div>
+  </div>
+  <button id="ios-hint-close" class="nb-btn px-2 py-1 text-xs" style="background:#fff">✕</button>
+</div>
 
 <script>
 /* =================== Storage =================== */
@@ -937,7 +955,8 @@ VIEW_FNS.settings = (el) => {
 
     <div class="nb-card p-6 mt-6" style="background:#FFF7E3">
       <h3 class="h-display text-lg font-extrabold mb-2">About Studi</h3>
-      <p class="text-sm" style="color:var(--ink-soft)">100% client-side · works offline (after first load) · zero accounts · zero servers · free forever. Self-host this single HTML file anywhere (GitHub Pages, Netlify, Vercel, your own folder).</p>
+      <p class="text-sm" style="color:var(--ink-soft)">100% client-side · installable PWA · zero accounts · zero servers · free forever. Self-host this single HTML file anywhere (GitHub Pages, Netlify, Vercel, your own folder).</p>
+      <p class="text-sm mt-2" style="color:var(--ink-soft)"><b>Install on your phone</b>: Android/Desktop will show an "⬇ Install Studi" button. On iPhone, tap Safari's <b>Share → Add to Home Screen</b>.</p>
     </div>
   `;
   document.getElementById("set-save").onclick = ()=>{
@@ -1015,6 +1034,63 @@ function initCharts(){
     });
   }
 }
+
+/* =================== PWA install =================== */
+(function setupPWA(){
+  // Inline web manifest via Blob URL — keeps everything in one file
+  const manifest = {
+    name: "Studi · Daily Study Tracker",
+    short_name: "Studi",
+    description: "A playful daily study tracker — subjects, pomodoro, schedule, journal, mock tests. Saves to your browser.",
+    start_url: "./",
+    scope: "./",
+    display: "standalone",
+    orientation: "portrait-primary",
+    background_color: "#FFF7E3",
+    theme_color: "#FFD600",
+    categories: ["productivity","education","lifestyle"],
+    icons: [
+      { src: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' fill='%23FFD600'/><rect x='40' y='40' width='432' height='432' rx='80' fill='%23FFD600' stroke='%231a1a2e' stroke-width='20'/><text x='256' y='360' text-anchor='middle' font-family='Arial Black,sans-serif' font-size='320' font-weight='900' fill='%231a1a2e'>S</text></svg>",
+        sizes: "192x192 512x512 any", type: "image/svg+xml", purpose: "any maskable" }
+    ]
+  };
+  try {
+    const blob = new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" });
+    const url = URL.createObjectURL(blob);
+    const lnk = document.createElement("link");
+    lnk.rel = "manifest"; lnk.href = url;
+    document.head.appendChild(lnk);
+  } catch(e) { console.warn("manifest inject failed", e); }
+
+  // Android/Desktop install prompt
+  let deferred = null;
+  const fab = document.getElementById("install-fab");
+  window.addEventListener("beforeinstallprompt", (e)=>{
+    e.preventDefault(); deferred = e;
+    if (fab) fab.style.display = "inline-flex";
+  });
+  if (fab) fab.onclick = async ()=>{
+    if (!deferred) return;
+    deferred.prompt();
+    try { await deferred.userChoice; } catch(e){}
+    deferred = null; fab.style.display = "none";
+  };
+  window.addEventListener("appinstalled", ()=>{ if (fab) fab.style.display="none"; deferred=null; });
+
+  // iOS Safari one-time hint
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  const HINT_KEY = "studi.iosHintDismissed";
+  if (isIOS && !isStandalone && !localStorage.getItem(HINT_KEY)) {
+    const hint = document.getElementById("ios-hint");
+    if (hint) {
+      setTimeout(()=>{ hint.style.display = "flex"; }, 1500);
+      document.getElementById("ios-hint-close").onclick = ()=>{
+        localStorage.setItem(HINT_KEY, "1"); hint.style.display = "none";
+      };
+    }
+  }
+})();
 
 /* =================== Boot =================== */
 render();
