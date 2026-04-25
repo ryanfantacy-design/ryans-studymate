@@ -227,6 +227,7 @@ const VIEWS = [
   { id:"schedule",  label:"Schedule",   icon:"⏰", color:"#B388FF" },
   { id:"journal",   label:"Journal",    icon:"📓", color:"#FFB38A" },
   { id:"mocks",     label:"Mock Tests", icon:"📝", color:"#00C896" },
+  { id:"timeline",  label:"Timeline",   icon:"📜", color:"#FFB38A" },
   { id:"stats",     label:"Stats",      icon:"📊", color:"#FFD600" },
   { id:"records",   label:"Records",    icon:"🕘", color:"#5BC0EB" },
   { id:"settings",  label:"Settings",   icon:"⚙️", color:"#B388FF" },
@@ -1235,6 +1236,136 @@ VIEW_FNS.mocks = (el) => {
     if (!confirm("Delete this mock test result?")) return;
     state.mocks = state.mocks.filter(x=>x.id!==b.dataset.id); save(); render();
   });
+};
+
+/* =================== TIMELINE — combined per-day review =================== */
+VIEW_FNS.timeline = (el) => {
+  const q = (state._tlQuery || "").toLowerCase();
+  const subjId = state._tlSubject || "";
+  const PAGE = 60;
+  const limit = state._tlLimit || PAGE;
+
+  // Aggregate by date
+  const byDate = new Map();
+  const ensure = (d) => {
+    if (!byDate.has(d)) byDate.set(d, { date:d, sessions:[], journal:null, mocks:[] });
+    return byDate.get(d);
+  };
+  state.sessions.forEach(s=>{
+    if (subjId && s.subject_id !== subjId) return;
+    if (q && !((s.subject_name||"").toLowerCase().includes(q) || (s.notes||"").toLowerCase().includes(q))) return;
+    ensure(s.date).sessions.push(s);
+  });
+  state.journal.forEach(j=>{
+    if (subjId) return; // journal isn't subject-tagged; skip when filtering
+    if (q && !(j.content||"").toLowerCase().includes(q)) return;
+    ensure(j.date).journal = j;
+  });
+  state.mocks.forEach(m=>{
+    if (subjId && m.subject_id !== subjId) return;
+    if (q && !((m.name||"").toLowerCase().includes(q) || (m.notes||"").toLowerCase().includes(q) || (m.subject_name||"").toLowerCase().includes(q))) return;
+    ensure(m.date).mocks.push(m);
+  });
+  const allDates = [...byDate.values()].sort((a,b)=>b.date.localeCompare(a.date));
+  const visible = allDates.slice(0, limit);
+  const more = allDates.length - visible.length;
+
+  el.innerHTML = `
+    ${pageTitle("Timeline","#FFB38A")}
+    <p class="text-sm mb-4" style="color:var(--ink-soft)">Browse every past day in one place — journal, sessions, and mock tests aggregated by date.</p>
+
+    <div class="nb-card p-4 mb-6 flex flex-wrap items-center gap-3">
+      <input id="tl-search" placeholder="🔎 Search notes, subjects, journal…" value="${escapeHtml(state._tlQuery||'')}" class="nb-input flex-1" style="min-width:220px"/>
+      <select id="tl-subj" class="nb-input" style="width:auto">
+        <option value="">All subjects</option>
+        ${state.subjects.map(s=>`<option value="${s.id}" ${s.id===subjId?'selected':''}>${escapeHtml(s.name)}</option>`).join("")}
+      </select>
+      <button id="tl-clear" class="nb-btn bg-white px-3 py-2 text-xs">Clear</button>
+      <span class="text-xs ml-auto" style="color:var(--ink-soft)">${allDates.length} day${allDates.length===1?'':'s'}</span>
+    </div>
+
+    <div id="tl-list" class="space-y-5"></div>
+    ${more > 0 ? `<div class="text-center mt-6"><button id="tl-more" class="nb-btn px-5 py-2.5" style="background:#FFD600">Show ${Math.min(more, PAGE)} more</button></div>` : ''}
+  `;
+
+  document.getElementById("tl-search").oninput = (e)=>{ state._tlQuery = e.target.value; state._tlLimit = PAGE; render(); };
+  document.getElementById("tl-subj").onchange = (e)=>{ state._tlSubject = e.target.value; state._tlLimit = PAGE; render(); };
+  document.getElementById("tl-clear").onclick = ()=>{ state._tlQuery=""; state._tlSubject=""; state._tlLimit=PAGE; render(); };
+  if (more > 0) document.getElementById("tl-more").onclick = ()=>{ state._tlLimit = limit + PAGE; render(); };
+
+  const list = document.getElementById("tl-list");
+  if (visible.length === 0){
+    list.innerHTML = `<div class="nb-card p-8 text-center" style="color:var(--ink-soft)">
+      <div style="font-size:48px">📭</div>
+      <div class="h-display text-xl font-bold mt-2" style="color:var(--ink)">No matching days</div>
+      <div class="text-sm mt-1">Try clearing filters, or start logging sessions and journal entries — your timeline will fill up here.</div>
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = visible.map(d => {
+    const totalMins = d.sessions.reduce((a,b)=>a+b.duration_minutes,0);
+    const date = new Date(d.date + "T00:00:00");
+    const isToday = d.date === todayStr();
+    const human = date.toLocaleDateString(undefined,{ weekday:"short", month:"short", day:"numeric", year:"numeric" });
+    const m = d.journal ? (MOODS.find(x=>x.id===d.journal.mood) || MOODS[2]) : null;
+    return `
+      <div class="nb-card overflow-hidden">
+        <div class="px-5 py-3 flex items-center justify-between gap-3 flex-wrap" style="background:${isToday?'#FFD600':'#FFF7E3'}; border-bottom:2px solid var(--ink);">
+          <div class="flex items-center gap-3">
+            <span class="mono font-bold text-lg">${d.date}</span>
+            <span class="text-xs font-bold uppercase tracking-widest" style="color:var(--ink-soft)">${human}${isToday?' · today':''}</span>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            ${totalMins>0 ? chipBlack(totalMins, "#FFD600") : ''}
+            <span class="sticker text-xs" style="background:#fff">${d.sessions.length} sess${d.sessions.length===1?'':'ions'}</span>
+            ${d.mocks.length>0 ? `<span class="sticker text-xs" style="background:#00C896">${d.mocks.length} mock${d.mocks.length===1?'':'s'}</span>` : ''}
+            ${d.journal ? `<span class="sticker text-xs" style="background:${m.color}">${m.emoji} ${m.label}</span>` : ''}
+          </div>
+        </div>
+        <div class="p-5 space-y-4">
+          ${d.journal ? `
+            <div>
+              <div class="text-xs font-bold uppercase tracking-widest mb-1.5" style="color:var(--ink-soft)">📓 Journal</div>
+              <div class="nb-card-soft p-3 text-sm" style="background:${m.color}33; white-space:pre-wrap;">${escapeHtml(d.journal.content) || '<em style="color:var(--ink-soft)">empty</em>'}</div>
+            </div>` : ''}
+          ${d.sessions.length > 0 ? `
+            <div>
+              <div class="text-xs font-bold uppercase tracking-widest mb-1.5" style="color:var(--ink-soft)">📚 Study sessions</div>
+              <div class="space-y-2">
+                ${d.sessions.map(s=>{
+                  const subj = state.subjects.find(x=>x.id===s.subject_id);
+                  const c = subj?.color || "#FFD600";
+                  return `<div class="flex items-center gap-3 p-2 rounded-xl" style="background:${c}22; border:1px solid ${c}66;">
+                    <span style="width:8px; height:8px; border-radius:999px; background:${c}; flex-shrink:0;"></span>
+                    <div class="flex-1 min-w-0">
+                      <div class="text-sm font-bold truncate">${escapeHtml(s.subject_name)}</div>
+                      ${s.notes?`<div class="text-xs truncate" style="color:var(--ink-soft)">${escapeHtml(s.notes)}</div>`:''}
+                    </div>
+                    ${chipBlack(s.duration_minutes, c)}
+                  </div>`;
+                }).join("")}
+              </div>
+            </div>` : ''}
+          ${d.mocks.length > 0 ? `
+            <div>
+              <div class="text-xs font-bold uppercase tracking-widest mb-1.5" style="color:var(--ink-soft)">📝 Mock tests</div>
+              <div class="space-y-2">
+                ${d.mocks.map(mk=>{
+                  const c = mk.percentage>=80?"#00C896":mk.percentage>=60?"#FFD600":mk.percentage>=40?"#FFB38A":"#FF6B6B";
+                  return `<div class="flex items-center gap-3 p-2 rounded-xl" style="background:${c}22; border:1px solid ${c}66;">
+                    <span class="chip-black" style="background:${c}; font-size:13px;">${mk.percentage}%</span>
+                    <div class="flex-1 min-w-0">
+                      <div class="text-sm font-bold truncate">${escapeHtml(mk.name)}</div>
+                      <div class="text-xs" style="color:var(--ink-soft)">${mk.score}/${mk.max_score}${mk.subject_name?' · '+escapeHtml(mk.subject_name):''}${mk.notes?' · '+escapeHtml(mk.notes):''}</div>
+                    </div>
+                  </div>`;
+                }).join("")}
+              </div>
+            </div>` : ''}
+        </div>
+      </div>`;
+  }).join("");
 };
 
 /* =================== STATS =================== */
