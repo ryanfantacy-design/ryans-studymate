@@ -1,57 +1,56 @@
 # Studi — Daily Study Tracker (PRD)
 
 ## Original Problem Statement
-"create a simple daily study tracker" — full-stack app (React + FastAPI + MongoDB) with subjects + daily times, daily goal & progress bar, streak counter, weekly chart, notes per session, full history, Pomodoro timer, schedule clock with alarms (custom music upload), JSON/CSV export and editable JSON import. User wanted duration values like "7 hr" rendered in BLACK text and an upgraded UI/background.
-
-**Iteration 2 additions**: Journal entries (with mood), Mock Test score tracking (with trend chart), Share-my-streak card export to PNG, **playful neo-brutalist** theme replacing the original dark theme.
+"create a simple daily study tracker" — full-stack app + later, a free single-HTML version. Features: subjects + daily times, daily goal & progress bar, streak counter, weekly chart, notes per session, full history, Pomodoro timer, schedule clock with alarms (custom music upload), journal entries, mock test score tracking, share-my-streak PNG export, JSON/CSV export and editable JSON import. Duration values like "7 hr" rendered in BLACK text. Playful UI (not too dark).
 
 ## Architecture
-- **Backend**: FastAPI (`/app/backend/server.py`), all routes prefixed `/api`, MongoDB via Motor, UUIDs as ids (no ObjectId leak), datetimes stored as ISO strings.
-- **Frontend**: React 19 + Tailwind, single `App.js` shell with sidebar navigation across **9 views**.
-- **Storage**: MongoDB collections — `subjects`, `sessions`, `settings`, `journal`, `mock_tests`. Schedule alarms + custom alarm music live in browser localStorage.
+- **Full-stack version** (preview URL):
+  - Backend: FastAPI (`/app/backend/server.py`) + MongoDB (Motor). All routes prefixed `/api`. UUIDs as ids.
+  - Frontend: React 19 + Tailwind, single `App.js` shell, 9 views.
+- **Standalone HTML version** (free, deployable anywhere):
+  - `/app/frontend/public/studi.html` (also served at `<preview>/studi.html`)
+  - `/app/standalone/index.html` (clean download path) + `/app/standalone/README.md`
+  - Vanilla JS + localStorage (key `studi.v1`); Tailwind Play CDN, Chart.js CDN, html2canvas CDN, Google Fonts.
 
 ## User Personas
-- Student / self-learner who logs daily study sessions, tracks streaks, runs Pomodoros, schedules study blocks with alarms, journals their reflections, tracks mock-test progress, and shares their streak on social.
+- Student / self-learner who logs daily study sessions, tracks streaks, runs Pomodoros, schedules study blocks with alarms, journals their reflections, tracks mock-test progress, and shares streaks on social — wants to use this entirely free.
 
-## Core Requirements (static)
+## Core Requirements
 - Subjects CRUD with daily target.
-- Log sessions with subject, duration, notes, date.
-- Daily goal progress bar.
-- Streak counter (current + longest + active days).
-- Weekly chart (last 7 days, recharts bar chart).
-- Pomodoro work/break with circular timer; auto-logs completed work session.
+- Sessions (subject, duration, notes, date) + history view with date filter + delete.
+- Daily goal progress bar, streak counter (current/longest/active).
+- Weekly bar chart.
+- Pomodoro work/break with circular timer; auto-logs work session.
 - Schedule clock + alarms ringing at start AND end times; user-uploaded audio.
-- Records view with date-range filter and per-row delete.
-- Export JSON / CSV; Import JSON (replace mode).
+- Journal: per-day entry with mood (great/good/okay/meh/bad) + notes.
+- Mock Tests: log name/subject/date/score/max → auto %, stats overview, line-chart trend.
+- Share streak card (branded PNG export).
+- Export JSON / CSV; Import JSON (replace).
 - Duration values rendered as **black text on bright accent chips**.
-- **Journal**: per-day entry with mood (great/good/okay/meh/bad) + notes; idempotent upsert.
-- **Mock Tests**: log name/subject/date/score/max → auto %, stats overview, line-chart trend.
-- **Share streak card**: branded PNG export of streak / today / week.
+- Playful neo-brutalist theme (cream bg, white cards w/ thick black borders + offset shadows).
 
 ## What's Implemented
-**Apr 25, 2026 — Iteration 1**
-- ✅ Backend: subjects, sessions, settings, stats (today/weekly/streak), export/import.
-- ✅ Frontend: 7 views (Today, Subjects, Pomodoro, Schedule, Stats, Records, Settings).
-- ✅ Original dark "playful" theme; duration chips black-on-bright.
-- ✅ Tested: 100% backend + frontend.
+**Apr 25, 2026 — Iteration 1** ✅ Subjects/Sessions/Stats/Pomodoro/Schedule/Records/Settings + dark playful theme. 100% tested.
 
-**Apr 25, 2026 — Iteration 2**
-- ✅ Backend: `/api/journal` (upsert by date, list, delete), `/api/mocks` (CRUD + stats/overview, max_score validation), export/import include journal + mock_tests.
-- ✅ Frontend: Journal view (date picker, 5 mood buttons, textarea, past-entries grid), Mock Tests view (form, sticker stats, recharts line trend, color-coded list).
-- ✅ ShareStreakCard component using `html-to-image` for PNG export with branded gradient + mini bar chart.
-- ✅ Full theme overhaul → cream `#FFF7E3` background with subtle dot pattern + soft coral/sky gradients, white cards with thick black borders and offset shadows, rotated sticker chips, colorful sidebar.
-- ✅ Duration chips still BLACK text on bright bg (verified by testing agent — `rgb(0,0,0)`).
-- ✅ Tested: 15/15 backend pytest + 100% frontend (iteration_2.json).
+**Apr 25, 2026 — Iteration 2** ✅ Journal + Mock Tests + Share-Streak PNG export + full theme overhaul to cream/playful neo-brutal. Backend `/api/journal` + `/api/mocks` + extended export/import. 15/15 backend pytest, 100% frontend.
+
+**Apr 25, 2026 — Iteration 3** ✅ Single-file standalone HTML build at `/app/frontend/public/studi.html` (and `/app/standalone/index.html`):
+- Vanilla JS + localStorage (key `studi.v1`). Defaults: empty subjects/sessions/journal/mocks; settings = 240/25/5.
+- Charts via Chart.js CDN; PNG share via html2canvas; Tailwind via Play CDN; fonts via Google Fonts.
+- Verified loading at preview URL — clean render, theme intact, no JS errors (only harmless Tailwind-CDN production warning).
+- README at `/app/standalone/README.md` with deploy guide (GitHub Pages / Netlify Drop / Vercel / etc.).
 
 ## Backlog / Future
-- **P1**: Split `App.js` (~1220 lines) into per-view files under `/app/frontend/src/components/`.
-- **P1**: Add Pydantic validation on `/api/import` payload items.
-- **P1**: Alarm trigger uses minute-string match; add last-trigger guard to handle background-throttled tabs.
-- **P2**: Per-subject weekly stacked bar; calendar heatmap of study days.
-- **P2**: Multi-user / auth.
-- **P2**: Mobile sidebar (hamburger / drawer).
-- **P2**: Journal prompts ("what clicked?", "what's stuck?") + mood-based study insights.
-- **P2**: Mock-test "topic" tags + per-subject breakdown.
+- **P1**: Split full-stack `App.js` (~1220 lines) into per-view component files.
+- **P1**: Validate `/api/import` payload shape on full-stack backend.
+- **P1**: Standalone alarm trigger uses minute-string match; add last-trigger guard for background-throttled tabs.
+- **P2**: Per-subject stacked weekly bar chart.
+- **P2**: Calendar heatmap of study days.
+- **P2**: Multi-user / auth for full-stack version.
+- **P2**: Mobile sidebar drawer polish.
+- **P2**: Journal prompts and mood-based study insights.
+- **P2**: Mock-test topic tags + per-subject breakdown.
+- **P2**: Optional AI Study Coach (Emergent LLM key) for the full-stack version.
 
 ## Next Tasks
-- Awaiting user feedback after iteration 2 review.
+- Awaiting user feedback after iteration 3 review.
